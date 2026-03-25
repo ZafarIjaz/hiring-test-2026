@@ -1,3 +1,5 @@
+import { UNLIMITED_SEATS_FIRESTORE_CAP } from './constants';
+
 // Server-side plan config — keep in sync with src/types/subscription.ts
 // Duplicated here to avoid importing client-side code into Cloud Functions.
 export const PLAN_CONFIG_SERVER = {
@@ -7,4 +9,12 @@ export const PLAN_CONFIG_SERVER = {
   vip:     { price: 499, seats: Infinity,  label: 'VIP' },
 } as const;
 
+export type PlanKey = keyof typeof PLAN_CONFIG_SERVER;
+
 export const ADDON_SEATS_BONUS = 5; // Extra Seats Pack adds 5 seats per purchase
+
+/** Seat cap persisted in Firestore (handles VIP “unlimited” as a large int). */
+export function firestoreSeatCap(plan: PlanKey): number {
+  const n = PLAN_CONFIG_SERVER[plan].seats;
+  return n === Infinity ? UNLIMITED_SEATS_FIRESTORE_CAP : n;
+}
