@@ -1,6 +1,6 @@
 # Hiring test — design decisions
 
-Author: **zafar** · Last updated: **2026-03-25** (today’s working session)
+Author: **zafar** · Last updated: **2026-03-26** (today’s working session)
 
 This file records trade-offs and intent for the clinic billing / staff flows described in `README.md`. The README asks for reasoning, not perfect answers.
 
@@ -78,9 +78,8 @@ This file records trade-offs and intent for the clinic billing / staff flows des
 
 ## Open / follow-up (not fully wired in the app yet)
 
-- React Native `src/services/stripe.ts`, `auth.ts`, billing/settings/staff screens still contain `TODO [CHALLENGE]` stubs: they should call the deployed callables and `Linking.openURL` for Checkout.
-- `firestore.rules`: tighten seat writes, grace-period checks, and optional `seats/{id}/members/{uid}.active` checks on staff mutations.
-- `calculateDiscountedPrice` in `src/types/discount.ts` for pure client-side **display** estimates only (never for charging).
+- Remaining client-side TODOs are mostly in `app/(app)/appointments.tsx` and `src/types/appointment.ts` (attachments + staff name resolution polish).
+- For production hardening, add a scheduled cleanup task for clinics that pass `gracePeriodEnd` without a matching Stripe terminal event.
 
 ---
 

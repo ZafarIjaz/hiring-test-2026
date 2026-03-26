@@ -19,7 +19,6 @@ export function isDiscountValid(discount: Discount): boolean {
   return expiry > now && discount.usedCount < discount.usageLimit;
 }
 
-// TODO [CHALLENGE]: Implement discount application logic.
 // Given a discount and a line item type, return the discount amount.
 // Rules:
 //   - If appliesToBase is false, discount does NOT apply to base plan
@@ -29,9 +28,22 @@ export function isDiscountValid(discount: Discount): boolean {
 //   - Existing subscribers with an active Stripe subscription item using the discount:
 //     decide whether to honor until renewal or strip immediately. Document your decision.
 export function calculateDiscountedPrice(
-  _basePrice: number,
-  _itemType: 'base' | AddonType,
-  _discount: Discount,
+  basePrice: number,
+  itemType: 'base' | AddonType,
+  discount: Discount,
 ): number {
-  throw new Error('TODO [CHALLENGE]: Implement calculateDiscountedPrice');
+  if (!isDiscountValid(discount)) return basePrice;
+
+  const applies =
+    itemType === 'base'
+      ? discount.appliesToBase
+      : discount.appliesToAddons === 'all' ||
+        (Array.isArray(discount.appliesToAddons) &&
+          discount.appliesToAddons.includes(itemType));
+
+  if (!applies) return basePrice;
+
+  const clampedPercent = Math.max(0, Math.min(100, discount.percentOff));
+  const discounted = basePrice - (basePrice * clampedPercent) / 100;
+  return Math.max(0, Number(discounted.toFixed(2)));
 }

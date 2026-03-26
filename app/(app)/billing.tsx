@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert, Linking,
 } from 'react-native';
 import { useAuth } from '@/hooks/useAuth';
 import { useClinic } from '@/hooks/useClinic';
 import { useSubscription } from '@/hooks/useSubscription';
+import { createCheckoutSession, purchaseAddon } from '@/services/stripe';
 import { getClinicAddons, getClinicDiscounts } from '@/services/firestore';
 import { PlanBadge } from '@/components/PlanBadge';
 import { SeatUsageBar } from '@/components/SeatUsageBar';
@@ -15,7 +16,7 @@ import type { Discount } from '@/types/discount';
 
 export default function BillingScreen() {
   const { isOwner } = useAuth();
-  const { clinic } = useClinic();
+  const { clinic, subscription } = useClinic();
   const { plan, status, config, seatsUsed, seatsMax } = useSubscription();
   const [addons, setAddons] = useState<Addon[]>([]);
   const [discounts, setDiscounts] = useState<Discount[]>([]);
@@ -34,17 +35,33 @@ export default function BillingScreen() {
     );
   }
 
-  function handleUpgrade() {
-    // TODO [CHALLENGE]: Open Stripe Checkout via createCheckoutSession (stripe.ts)
-    // Navigate to a plan selection screen, then call createCheckoutSession.
-    // After checkout, Stripe webhook → Cloud Function → Firestore update.
-    Alert.alert('TODO', 'Implement Stripe Checkout (Scenario 1)');
+  async function handleUpgrade() {
+    if (!clinic) return;
+    const nextPlan = plan === 'free' ? 'pro' : plan === 'pro' ? 'premium' : 'vip';
+    try {
+      const session = await createCheckoutSession({
+        clinicId: clinic.id,
+        plan: nextPlan,
+      });
+      await Linking.openURL(session.url);
+    } catch (err) {
+      Alert.alert('Upgrade failed', (err as Error).message);
+    }
   }
 
-  function handlePurchaseAddon(addonType: string) {
-    // TODO [CHALLENGE]: Call purchaseAddon from stripe.ts
-    // Remember: validate applicable discounts server-side (Scenario 3)
-    Alert.alert('TODO', `Implement add-on purchase for ${addonType} (Scenario 3)`);
+  async function handlePurchaseAddon(addonType: string) {
+    if (!clinic) return;
+    try {
+      await purchaseAddon({
+        clinicId: clinic.id,
+        addonType: addonType as 'extra_storage' | 'extra_seats' | 'advanced_analytics',
+      });
+      Alert.alert('Add-on purchased', 'The subscription was updated successfully.');
+      const refreshed = await getClinicAddons(clinic.id);
+      setAddons(refreshed);
+    } catch (err) {
+      Alert.alert('Add-on purchase failed', (err as Error).message);
+    }
   }
 
   return (
@@ -68,8 +85,11 @@ export default function BillingScreen() {
               Payment failed. You have a grace period to resolve this.
               New staff cannot be added until billing is resolved.
             </Text>
-            {/* TODO [CHALLENGE]: Show gracePeriodEnd date from subscription */}
-            {/* TODO [CHALLENGE]: After grace period ends, plan reverts to Free (Scenario 4) */}
+            {subscription?.gracePeriodEnd && (
+              <Text style={[styles.warningText, { marginTop: 6, fontWeight: '700' }]}>
+                Grace period ends on {subscription.gracePeriodEnd.toDate().toLocaleDateString('en-CH')}.
+              </Text>
+            )}
           </View>
         )}
       </View>
@@ -129,10 +149,17 @@ export default function BillingScreen() {
       {discounts.length > 0 && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Active discounts</Text>
-          {discounts.map((d) => (
+          {discounts.filter((d) => d.validUntil.toDate() > new Date()).map((d) => (
             <DiscountTag key={d.id} discount={d} />
           ))}
-          {/* TODO [CHALLENGE]: Scenario 5 — show expired discount state clearly */}
+          {discounts.some((d) => d.validUntil.toDate() <= new Date()) && (
+            <>
+              <Text style={[styles.sectionTitle, { marginTop: 12 }]}>Expired discounts</Text>
+              {discounts.filter((d) => d.validUntil.toDate() <= new Date()).map((d) => (
+                <DiscountTag key={d.id} discount={d} />
+              ))}
+            </>
+          )}
         </View>
       )}
 

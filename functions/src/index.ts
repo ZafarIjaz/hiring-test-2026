@@ -12,3 +12,4 @@ export {
   removeStaffMember,
 } from './stripe/checkout';
 export { inviteStaffMember } from './stripe/inviteStaff';
+export { revokeUserSession } from './auth/revokeUserSession';

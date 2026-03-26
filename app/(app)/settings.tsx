@@ -1,12 +1,13 @@
 import React from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert, Linking,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useClinic } from '@/hooks/useClinic';
 import { useSubscription } from '@/hooks/useSubscription';
 import { signOut } from '@/services/auth';
+import { createCheckoutSession, initiateDowngrade } from '@/services/stripe';
 import { PlanBadge } from '@/components/PlanBadge';
 import { PLAN_CONFIG } from '@/types/subscription';
 import type { Plan } from '@/types/subscription';
@@ -24,17 +25,39 @@ export default function SettingsScreen() {
     router.replace('/(auth)/login');
   }
 
-  function handleUpgrade(targetPlan: Plan) {
-    // TODO [CHALLENGE]: Navigate to Stripe Checkout for upgrade (Scenario 1)
-    Alert.alert('TODO', `Implement upgrade to ${targetPlan}`);
+  async function handleUpgrade(targetPlan: Plan) {
+    if (!clinic) return;
+    if (targetPlan === 'free') return;
+    try {
+      const session = await createCheckoutSession({
+        clinicId: clinic.id,
+        plan: targetPlan as 'pro' | 'premium' | 'vip',
+      });
+      await Linking.openURL(session.url);
+    } catch (err) {
+      Alert.alert('Upgrade failed', (err as Error).message);
+    }
   }
 
-  function handleDowngrade(targetPlan: Plan) {
-    // TODO [CHALLENGE]: Implement downgrade with seat conflict detection (Scenario 2)
-    // Before calling Stripe, check if active seats > targetPlan's seat limit.
-    // If conflict: show modal asking user to deactivate excess staff OR queue for end of cycle.
-    // Document your chosen strategy in DECISIONS.md.
-    Alert.alert('TODO', `Implement downgrade to ${targetPlan} — see Scenario 2`);
+  async function handleDowngrade(targetPlan: Plan) {
+    if (!clinic) return;
+    if (targetPlan === 'vip') return;
+    try {
+      const result = await initiateDowngrade({
+        clinicId: clinic.id,
+        targetPlan: targetPlan as 'free' | 'pro' | 'premium',
+      });
+      if (result.strategy === 'blocked') {
+        Alert.alert(
+          'Downgrade blocked',
+          `Deactivate ${result.conflictingSeats ?? 0} staff seat(s) before downgrading.`,
+        );
+        return;
+      }
+      Alert.alert('Downgrade started', 'Stripe accepted the change. Firestore will sync via webhook.');
+    } catch (err) {
+      Alert.alert('Downgrade failed', (err as Error).message);
+    }
   }
 
   return (

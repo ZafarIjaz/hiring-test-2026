@@ -12,26 +12,52 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
     }
 
+    function getUserClinicId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.clinicId;
+    }
+
     function isOwner() {
       return isAuthenticated() && getUserRole() == 'owner';
     }
 
-    function isStaff() {
-      return isAuthenticated() && (getUserRole() == 'staff' || getUserRole() == 'owner');
+    function isStaffForClinic(clinicId) {
+      return isAuthenticated() &&
+        belongsToClinic(clinicId) &&
+        isSeatActive(clinicId, request.auth.uid) &&
+        (getUserRole() == 'staff' || getUserRole() == 'owner');
     }
 
     function belongsToClinic(clinicId) {
       return isAuthenticated() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.clinicId == clinicId;
+        getUserClinicId() == clinicId;
+    }
+
+    function isSeatActive(clinicId, userId) {
+      return exists(/databases/$(database)/documents/seats/$(clinicId)/members/$(userId)) &&
+        get(/databases/$(database)/documents/seats/$(clinicId)/members/$(userId)).data.active == true;
     }
 
     function getClinicPlan(clinicId) {
       return get(/databases/$(database)/documents/subscriptions/$(clinicId)).data.plan;
     }
 
-    function clinicIsActive(clinicId) {
-      let sub = get(/databases/$(database)/documents/subscriptions/$(clinicId)).data;
-      return sub.status == 'active' || sub.status == 'grace_period';
+    function getClinicSubStatus(clinicId) {
+      return get(/databases/$(database)/documents/subscriptions/$(clinicId)).data.status;
+    }
+
+    function clinicAllowsSeatGrowth(clinicId) {
+      let clinic = get(/databases/$(database)/documents/clinics/$(clinicId)).data;
+      return getClinicSubStatus(clinicId) == 'active' &&
+        clinic.seats.used < clinic.seats.max;
+    }
+
+    function hasExtraStorageAddon(clinicId) {
+      return get(/databases/$(database)/documents/clinics/$(clinicId)).data.extraStorage == true;
+    }
+
+    function isPremiumOrHigher(clinicId) {
+      let plan = getClinicPlan(clinicId);
+      return plan == 'premium' || plan == 'vip';
     }
 
     // Clinics collection
@@ -60,54 +86,75 @@ service cloud.firestore {
     // Subscriptions
     match /subscriptions/{clinicId} {
       allow read: if isAuthenticated() && belongsToClinic(clinicId);
-      // TODO [CHALLENGE]: Only allow writes from Cloud Functions (server-side via admin SDK)
-      // Hint: check request.auth.token.admin or use a service account claim
       allow write: if false;
     }
 
     // Add-ons
     match /addons/{clinicId}/items/{addonId} {
       allow read: if isAuthenticated() && belongsToClinic(clinicId);
-      // TODO [CHALLENGE]: Only allow writes from Cloud Functions
       allow write: if false;
     }
 
     // Discounts — readable by owners to display in billing UI
     match /discounts/{discountId} {
       allow read: if isOwner();
-      // TODO [CHALLENGE]: Discounts are created server-side. Validate expiry and usage limit before applying.
       allow write: if false;
     }
 
     // Appointments
     match /appointments/{appointmentId} {
+      function requestClinicId() {
+        return request.method == 'create' ? request.resource.data.clinicId : resource.data.clinicId;
+      }
+
+      function canWriteAppointment() {
+        let clinicId = requestClinicId();
+        let hasAttachments = 'attachments' in request.resource.data && request.resource.data.attachments.size() > 0;
+        return isStaffForClinic(clinicId) &&
+          (
+            !hasAttachments ||
+            hasExtraStorageAddon(clinicId)
+          ) &&
+          (
+            !('analyticsSnapshot' in request.resource.data) ||
+            isPremiumOrHigher(clinicId)
+          );
+      }
+
       allow read: if isAuthenticated() && (
         // Staff and owners see all clinic appointments
-        isStaff() ||
+        isStaffForClinic(resource.data.clinicId) ||
         // Patients see only their own
         resource.data.patientId == request.auth.uid
       );
 
-      allow create: if isStaff(); // Staff/owner books appointments
-
-      // TODO [CHALLENGE]: Add plan-based access control.
-      // Example: Advanced reporting (analytics on appointments) requires Premium or higher.
-      // Extra Storage add-on required to attach files to appointments.
-
-      allow update: if isStaff();
-      allow delete: if isOwner();
+      allow create: if canWriteAppointment(); // Staff/owner books appointments
+      allow update: if canWriteAppointment() &&
+        request.resource.data.clinicId == resource.data.clinicId; // clinic is immutable
+      allow delete: if isOwner() && isStaffForClinic(resource.data.clinicId);
     }
 
     // Seats
     match /seats/{clinicId}/members/{userId} {
       allow read: if isAuthenticated() && belongsToClinic(clinicId);
 
-      // TODO [CHALLENGE]: Enforce seat limits on write.
-      // Before allowing a new seat, check:
-      //   1. clinic.seats.used < clinic.seats.max (plan limit + any Extra Seats add-ons)
-      //   2. Subscription status is 'active' (not grace_period or canceled)
-      // This must be enforced here in rules, not just in UI.
-      allow write: if isOwner() && belongsToClinic(clinicId);
+      allow create: if isOwner() &&
+        belongsToClinic(clinicId) &&
+        request.resource.data.active == true &&
+        clinicAllowsSeatGrowth(clinicId);
+
+      allow update: if isOwner() &&
+        belongsToClinic(clinicId) &&
+        (
+          // Deactivation is always allowed.
+          (resource.data.active == true && request.resource.data.active == false) ||
+          // Activation requires active subscription and free capacity.
+          (resource.data.active == false && request.resource.data.active == true && clinicAllowsSeatGrowth(clinicId)) ||
+          // Metadata-only updates (no active flip).
+          (resource.data.active == request.resource.data.active)
+        );
+
+      allow delete: if false;
     }
   }
 }

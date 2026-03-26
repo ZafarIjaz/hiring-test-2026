@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, FlatList, StyleSheet, TouchableOpacity, Alert,
+  View, Text, FlatList, StyleSheet, TouchableOpacity, Alert, Modal, TextInput,
 } from 'react-native';
 import { useAuth } from '@/hooks/useAuth';
 import { useClinic } from '@/hooks/useClinic';
 import { useSubscription } from '@/hooks/useSubscription';
 import { getClinicMembers } from '@/services/firestore';
 import { SeatUsageBar } from '@/components/SeatUsageBar';
+import { inviteStaffMember, removeStaffMember } from '@/services/auth';
 import type { User } from '@/types/user';
 
 export default function StaffScreen() {
@@ -14,6 +15,9 @@ export default function StaffScreen() {
   const { clinic } = useClinic();
   const { seatsUsed, seatsMax, canAddStaff, isGracePeriod } = useSubscription();
   const [members, setMembers] = useState<User[]>([]);
+  const [inviteVisible, setInviteVisible] = useState(false);
+  const [inviteName, setInviteName] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
 
   useEffect(() => {
     if (!clinic) return;
@@ -21,6 +25,29 @@ export default function StaffScreen() {
       setMembers(all.filter((u) => u.role === 'staff' || u.role === 'owner')),
     );
   }, [clinic?.id]);
+
+  async function submitInvite() {
+    if (!clinic) return;
+    if (!inviteName.trim() || !inviteEmail.trim()) {
+      Alert.alert('Missing fields', 'Enter both name and email.');
+      return;
+    }
+    try {
+      const { resetLink } = await inviteStaffMember({
+        clinicId: clinic.id,
+        displayName: inviteName.trim(),
+        email: inviteEmail.trim(),
+      });
+      setInviteVisible(false);
+      setInviteName('');
+      setInviteEmail('');
+      Alert.alert('Invite created', `Share this reset link with the staff member:\n\n${resetLink}`);
+      const all = await getClinicMembers(clinic.id);
+      setMembers(all.filter((u) => u.role === 'staff' || u.role === 'owner'));
+    } catch (err) {
+      Alert.alert('Invite failed', (err as Error).message);
+    }
+  }
 
   function handleInviteStaff() {
     if (!canAddStaff) {
@@ -31,12 +58,7 @@ export default function StaffScreen() {
       }
       return;
     }
-    // TODO [CHALLENGE]: Implement staff invitation.
-    // Options: email invite link, direct email-based add, shareable clinic code.
-    // Whatever you choose: the invite must create a user with role='staff' and clinicId set.
-    // The server must check seat availability BEFORE creating the record (Firestore rules).
-    // Document your approach in DECISIONS.md.
-    Alert.alert('TODO', 'Implement staff invite flow (see StaffScreen TODO)');
+    setInviteVisible(true);
   }
 
   function handleRemoveStaff(user: User) {
@@ -49,14 +71,16 @@ export default function StaffScreen() {
           text: 'Remove',
           style: 'destructive',
           onPress: () => {
-            // TODO [CHALLENGE]: Implement staff removal + session invalidation (Scenario 6).
-            // Steps:
-            //   1. Set seats/{clinicId}/members/{userId}.active = false (server-side)
-            //   2. Update users/{userId}.role (or set clinicId to null)
-            //   3. Invalidate their auth session — call revokeUserSession from auth.ts
-            //   4. Decrement clinic.seats.used
-            // All of this should happen in a single Cloud Function to be atomic.
-            Alert.alert('TODO', 'Implement removeStaffMember Cloud Function (Scenario 6)');
+            if (!clinic) return;
+            removeStaffMember({
+              clinicId: clinic.id,
+              targetUserId: user.id,
+            })
+              .then(async () => {
+                const all = await getClinicMembers(clinic.id);
+                setMembers(all.filter((u) => u.role === 'staff' || u.role === 'owner'));
+              })
+              .catch((err) => Alert.alert('Removal failed', (err as Error).message));
           },
         },
       ],
@@ -92,6 +116,36 @@ export default function StaffScreen() {
 
   return (
     <View style={styles.container}>
+      <Modal visible={inviteVisible} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Invite staff member</Text>
+            <TextInput
+              value={inviteName}
+              onChangeText={setInviteName}
+              placeholder="Full name"
+              style={styles.input}
+            />
+            <TextInput
+              value={inviteEmail}
+              onChangeText={setInviteEmail}
+              placeholder="Email"
+              autoCapitalize="none"
+              keyboardType="email-address"
+              style={styles.input}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity onPress={() => setInviteVisible(false)}>
+                <Text style={styles.modalCancel}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={submitInvite}>
+                <Text style={styles.modalSubmit}>Send invite</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <View style={styles.header}>
         <SeatUsageBar used={seatsUsed} max={seatsMax} />
         {isOwner && (
@@ -106,7 +160,7 @@ export default function StaffScreen() {
 
       <FlatList
         data={members}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item: User) => item.id}
         renderItem={renderMember}
         contentContainerStyle={styles.list}
         ListEmptyComponent={
@@ -167,4 +221,29 @@ const styles = StyleSheet.create({
   roleTextOwner: { color: '#92400e' },
   removeButton: { fontSize: 13, color: '#ef4444', fontWeight: '600' },
   empty: { fontSize: 14, color: '#9ca3af', textAlign: 'center', marginTop: 32 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(17,24,39,0.45)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    gap: 10,
+  },
+  modalTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  input: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#111827',
+  },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 14, marginTop: 4 },
+  modalCancel: { fontSize: 14, color: '#6b7280', fontWeight: '600' },
+  modalSubmit: { fontSize: 14, color: '#2563eb', fontWeight: '700' },
 });

@@ -23,18 +23,18 @@ export type CheckoutResult = {
   url: string;
 };
 
-// TODO [CHALLENGE]: Implement Stripe Checkout session creation (Scenario 1 & 2).
 // This calls the createCheckoutSession Cloud Function, which:
 //   1. Creates or retrieves a Stripe Customer for this clinic
 //   2. Creates a Checkout Session with the correct price ID
 //   3. Applies any valid discount codes (validate expiry server-side — don't trust client)
 //   4. Returns the session URL for redirect
 //
-// The Cloud Function stub is at functions/src/stripe/checkout.ts
 export async function createCheckoutSession(
-  _params: CreateCheckoutParams,
+  params: CreateCheckoutParams,
 ): Promise<CheckoutResult> {
-  throw new Error('TODO [CHALLENGE]: Implement createCheckoutSession');
+  const callable = functions().httpsCallable('createCheckoutSession');
+  const result = await callable(params);
+  return result.data as CheckoutResult;
 }
 
 export type AddonPurchaseParams = {
@@ -43,15 +43,15 @@ export type AddonPurchaseParams = {
   discountCode?: string;
 };
 
-// TODO [CHALLENGE]: Implement add-on purchase (Scenario 3).
 // This calls the purchaseAddon Cloud Function.
 // Important: discount application must match the discount's appliesToAddons field.
 // A discount with appliesToBase: true, appliesToAddons: [] does NOT apply here.
 // Validate this server-side in the Cloud Function.
 export async function purchaseAddon(
-  _params: AddonPurchaseParams,
+  params: AddonPurchaseParams,
 ): Promise<void> {
-  throw new Error('TODO [CHALLENGE]: Implement purchaseAddon');
+  const callable = functions().httpsCallable('purchaseAddon');
+  await callable(params);
 }
 
 export type DowngradeParams = {
@@ -62,12 +62,11 @@ export type DowngradeParams = {
 export type DowngradeResult = {
   // 'immediate': downgrade processed now (no seat conflict, or user resolved conflict)
   // 'queued': scheduled for end of billing period (seat conflict detected)
-  strategy: 'immediate' | 'queued';
+  strategy: 'immediate' | 'queued' | 'blocked';
   conflictingSeats?: number; // how many seats exceed target plan limit
   effectiveDate?: string; // ISO date if queued
 };
 
-// TODO [CHALLENGE]: Implement plan downgrade (Scenario 2).
 // This is the hard one. Before calling Stripe, the Cloud Function must:
 //   1. Check current active seat count against target plan's seat limit
 //   2. If conflict: decide between immediate block or queue-for-end-of-cycle
@@ -75,7 +74,9 @@ export type DowngradeResult = {
 //   4. If queued: set a flag in Firestore, enforce in rules until resolved
 //   5. Firestore rules must block new seat additions during the downgrade-pending state
 export async function initiateDowngrade(
-  _params: DowngradeParams,
+  params: DowngradeParams,
 ): Promise<DowngradeResult> {
-  throw new Error('TODO [CHALLENGE]: Implement initiateDowngrade');
+  const callable = functions().httpsCallable('initiateDowngrade');
+  const result = await callable(params);
+  return result.data as DowngradeResult;
 }
